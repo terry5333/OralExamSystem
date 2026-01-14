@@ -46,13 +46,14 @@
         .btn-retro:active { transform: translate(2px, 2px); box-shadow: none; }
         .stamp { border: 3px solid #A52A2A; color: #A52A2A; padding: 4px 8px; border-radius: 4px; transform: rotate(-15deg); font-weight: 900; display: inline-block; }
         input[type="checkbox"] { accent-color: #2D5A27; cursor: pointer; }
+        textarea:focus { border-color: #2D5A27; background-color: #f0fdf4; }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useRef } = React;
 
         const DEFAULT_WORDS = Array.from({length: 20}, (_, i) => `Word ${i+1}`);
         const DEFAULT_SENTENCES = Array.from({length: 10}, (_, i) => `Sample Sentence ${i+1} for oral practice.`);
@@ -64,6 +65,7 @@
             const [user, setUser] = useState(null);
             const [session, setSession] = useState(null);
             const [examData, setExamData] = useState({ words: DEFAULT_WORDS, sentences: DEFAULT_SENTENCES, grammar: DEFAULT_GRAMMAR });
+            const [currentPaperId, setCurrentPaperId] = useState('PaperA'); // 目前使用的試卷 ID
             const [students, setStudents] = useState([]);
             const [history, setHistory] = useState([]);
             const [isAuthorized, setIsAuthorized] = useState(false);
@@ -95,8 +97,22 @@
             useEffect(() => {
                 if (!user || !window.fb) return;
                 const { db, doc, onSnapshot, collection, query } = window.fb;
+                
+                // 監聽目前連線 Session
                 const unsubSession = onSnapshot(doc(db, 'sessions', 'current'), (snap) => setSession(snap.exists() ? snap.data() : null));
-                const unsubConfig = onSnapshot(doc(db, 'config', 'exam_data'), (snap) => { if (snap.exists()) setExamData(snap.data()); });
+                
+                // 監聽全域設定 (目前的試卷編號)
+                const unsubGlobalConfig = onSnapshot(doc(db, 'config', 'settings'), (snap) => {
+                    if (snap.exists()) setCurrentPaperId(snap.data().activePaper || 'PaperA');
+                });
+
+                // 監聽特定試卷內容
+                const unsubConfig = onSnapshot(doc(db, 'papers', currentPaperId), (snap) => { 
+                    if (snap.exists()) setExamData(snap.data()); 
+                    else setExamData({ words: DEFAULT_WORDS, sentences: DEFAULT_SENTENCES, grammar: DEFAULT_GRAMMAR });
+                });
+
+                // 監聽學生名單
                 const unsubStudents = onSnapshot(doc(db, 'config', 'students'), (snap) => { if (snap.exists()) setStudents(snap.data().list || []); });
                 
                 // 獲取歷史成績
@@ -105,14 +121,20 @@
                     setHistory(data.sort((a, b) => b.timestamp - a.timestamp));
                 });
 
-                return () => { unsubSession(); unsubConfig(); unsubStudents(); unsubHistory(); };
-            }, [user]);
+                return () => { unsubSession(); unsubGlobalConfig(); unsubConfig(); unsubStudents(); unsubHistory(); };
+            }, [user, currentPaperId]);
 
             const updateSession = (data) => window.fb && window.fb.updateDoc(window.fb.doc(window.fb.db, 'sessions', 'current'), data);
 
             const resetSession = async () => {
                 const { db, doc, setDoc, deleteDoc } = window.fb;
-                if (session && session.student) await setDoc(doc(db, 'history', `record_${Date.now()}`), { ...session, timestamp: Date.now() });
+                if (session && session.student) {
+                    await setDoc(doc(db, 'history', `record_${Date.now()}`), { 
+                        ...session, 
+                        paperId: currentPaperId,
+                        timestamp: Date.now() 
+                    });
+                }
                 await deleteDoc(doc(db, 'sessions', 'current'));
                 setConfirmData(false);
                 setLoginName("");
@@ -139,7 +161,11 @@
                 return newList.join('\n');
             };
 
-            // 取得所有班級列表 (從名單中提取)
+            // 檢查學生是否已經考過這份試卷
+            const isAlreadyTaken = (name, paperId) => {
+                return history.some(h => h.student?.name === name && h.paperId === paperId);
+            };
+
             const availableClasses = [...new Set(students.map(s => s.split('-')[0]))].sort();
 
             if (loading) return <div className="min-h-screen flex items-center justify-center italic">系統啟動中...</div>;
@@ -176,7 +202,7 @@
 
             if (role === 'teacher') {
                 return (
-                    <div className="min-h-screen flex flex-col max-w-4xl mx-auto">
+                    <div className="min-h-screen flex flex-col max-w-5xl mx-auto">
                         <div className="flex bg-[#E6D5B8] border-b-2 border-[#5D4037] sticky top-0 z-10 overflow-x-auto">
                             {['exam', 'results', 'questions', 'students'].map((t) => (
                                 <button key={t} onClick={() => setTeacherTab(t)} className={`px-4 py-4 text-xs font-black flex-1 border-r border-[#5D4037] whitespace-nowrap ${teacherTab === t ? 'tab-active' : ''}`}>
@@ -190,8 +216,23 @@
                             {teacherTab === 'exam' && (
                                 <div className="space-y-4">
                                     <div className="bg-white p-4 retro-border">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <h3 className="font-black text-sm">目前測驗試卷：</h3>
+                                            <select 
+                                                value={currentPaperId} 
+                                                onChange={(e) => {
+                                                    const newPaper = e.target.value;
+                                                    window.fb.setDoc(window.fb.doc(window.fb.db, 'config', 'settings'), { activePaper: newPaper });
+                                                }}
+                                                className="bg-[#2D5A27] text-white px-3 py-1 font-bold text-xs retro-border"
+                                            >
+                                                <option value="PaperA">試卷 A</option>
+                                                <option value="PaperB">試卷 B</option>
+                                                <option value="PaperC">試卷 C</option>
+                                            </select>
+                                        </div>
                                         <div className="flex justify-between items-start border-b border-[#5D4037] mb-3 pb-1">
-                                            <h3 className="font-black text-xs">受驗生狀態</h3>
+                                            <h3 className="font-black text-xs uppercase opacity-60">Status / 受驗生狀態</h3>
                                             {session && (
                                                 <button onClick={forceTerminate} className="text-[10px] bg-red-800 text-white px-2 py-0.5 font-bold hover:bg-red-600">強制結束考試</button>
                                             )}
@@ -199,7 +240,10 @@
                                         {session ? (
                                             <div className="space-y-2 animate-in fade-in">
                                                 <div className="flex justify-between items-center">
-                                                    <p className="font-black text-xl">{session.student?.name}</p>
+                                                    <div>
+                                                        <p className="font-black text-xl">{session.student?.name}</p>
+                                                        <p className="text-[10px] font-bold opacity-50">正在考查：{currentPaperId}</p>
+                                                    </div>
                                                     <span className="text-xs font-bold bg-[#A52A2A] text-white px-2 py-1">
                                                         {session.step === 'ready' ? '準備中' : session.step === 'words' ? '單字測驗' : session.step === 'sentence' ? '句子測驗' : session.step === 'grammar' ? '文法測驗' : '結算中'}
                                                     </span>
@@ -218,10 +262,10 @@
                                             {session.step === 'words' && (
                                                 <div>
                                                     <h4 className="font-black text-sm mb-2 text-[#2D5A27]">單字階段 ({session.wordCount || 0}/10)</h4>
-                                                    <div className="grid grid-cols-4 gap-2 mb-4">
+                                                    <div className="grid grid-cols-4 md:grid-cols-5 gap-2 mb-4">
                                                         {examData.words?.map((w, i) => (
                                                             <button key={i} onClick={() => updateSession({ currentItem: w, currentItemIndex: i })}
-                                                                className={`p-2 text-[10px] retro-border font-bold ${session.currentItem === w ? 'bg-[#2D5A27] text-white shadow-inner' : 'bg-white'}`}>{w}</button>
+                                                                className={`p-2 text-[10px] retro-border font-bold truncate ${session.currentItem === w ? 'bg-[#2D5A27] text-white shadow-inner' : 'bg-white'}`}>{w}</button>
                                                         ))}
                                                     </div>
                                                     <div className="flex gap-2">
@@ -235,7 +279,7 @@
                                             {(session.step === 'sentence' || session.step === 'grammar') && (
                                                 <div className="space-y-4">
                                                     <h4 className="font-black text-sm text-[#A52A2A]">{session.step === 'sentence' ? '句子評分 (1~5)' : '文法評分 (1~5)'}</h4>
-                                                    <div className="p-6 bg-stone-100 retro-border text-center font-black italic text-xl">{session.currentItem}</div>
+                                                    <div className="p-6 bg-stone-100 retro-border text-center font-black italic text-xl min-h-[100px] flex items-center justify-center">{session.currentItem}</div>
                                                     <div className="flex gap-1">
                                                         {[1,2,3,4,5].map(s => (
                                                             <button key={s} onClick={() => {
@@ -276,6 +320,7 @@
                                                 <tr>
                                                     <th className="p-2">時間</th>
                                                     <th className="p-2">學號姓名</th>
+                                                    <th className="p-2">試卷</th>
                                                     <th className="p-2 text-center">單字</th>
                                                     <th className="p-2 text-center">句子</th>
                                                     <th className="p-2 text-center">文法</th>
@@ -289,13 +334,14 @@
                                                     <tr key={i} className="border-b border-stone-200 hover:bg-stone-50">
                                                         <td className="p-2 text-[10px] opacity-60">{new Date(h.timestamp).toLocaleString([], {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'})}</td>
                                                         <td className="p-2">{h.student?.name}</td>
+                                                        <td className="p-2 text-[10px] font-black">{h.paperId?.replace('Paper', '卷 ')}</td>
                                                         <td className="p-2 text-center">{h.scores?.words}</td>
                                                         <td className="p-2 text-center">{h.scores?.sentence}</td>
                                                         <td className="p-2 text-center">{h.scores?.grammar}</td>
                                                         <td className="p-2 text-center text-[#A52A2A]">{(h.scores?.words||0)+(h.scores?.sentence||0)+(h.scores?.grammar||0)}</td>
                                                     </tr>
                                                 ))}
-                                                {history.length === 0 && <tr><td colSpan="6" className="p-8 text-center italic opacity-40">尚無歷史紀錄</td></tr>}
+                                                {history.length === 0 && <tr><td colSpan="7" className="p-8 text-center italic opacity-40">尚無歷史紀錄</td></tr>}
                                             </tbody>
                                         </table>
                                     </div>
@@ -325,20 +371,60 @@
 
                             {teacherTab === 'questions' && (
                                 <div className="space-y-4">
-                                    <div className="bg-white p-4 retro-border">
-                                        <h4 className="font-black text-xs mb-2">單字題庫 (請用英文逗號隔開)</h4>
-                                        <textarea id="w_ed" defaultValue={examData.words.join(',')} className="w-full h-20 border p-2 text-xs mb-4" />
-                                        <h4 className="font-black text-xs mb-2">句子題庫 (每行一題)</h4>
-                                        <textarea id="s_ed" defaultValue={examData.sentences.join('\n')} className="w-full h-20 border p-2 text-xs mb-4" />
-                                        <h4 className="font-black text-xs mb-2">文法題庫 (每行一題)</h4>
-                                        <textarea id="g_ed" defaultValue={examData.grammar.join('\n')} className="w-full h-20 border p-2 text-xs mb-4" />
-                                        <button onClick={() => {
-                                            const words = document.getElementById('w_ed').value.split(',').map(s=>s.trim());
-                                            const sentences = document.getElementById('s_ed').value.split('\n').map(s=>s.trim());
-                                            const grammar = document.getElementById('g_ed').value.split('\n').map(s=>s.trim());
-                                            window.fb.setDoc(window.fb.doc(window.fb.db, 'config', 'exam_data'), { words, sentences, grammar });
-                                            alert('題庫已更新');
-                                        }} className="w-full bg-[#2D5A27] text-white py-3 font-bold">更新題庫</button>
+                                    <div className="bg-[#E6D5B8] p-3 retro-border flex items-center justify-between">
+                                        <h4 className="font-black text-xs text-[#5D4037]">編輯中試卷：</h4>
+                                        <div className="flex gap-2">
+                                            {['PaperA', 'PaperB', 'PaperC'].map(id => (
+                                                <button key={id} onClick={() => setCurrentPaperId(id)} 
+                                                    className={`px-3 py-1 text-[10px] font-bold retro-border ${currentPaperId === id ? 'bg-[#2D5A27] text-white shadow-inner' : 'bg-white text-[#5D4037]'}`}>
+                                                    {id.replace('Paper', '試卷 ')}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-white p-4 retro-border space-y-6 shadow-md">
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                            <div className="flex flex-col">
+                                                <div className="flex justify-between items-center mb-1">
+                                                    <h4 className="font-black text-[10px] text-[#2D5A27]">1. 單字 (用逗號隔開)</h4>
+                                                    <span className="text-[9px] font-bold opacity-60">計：{examData.words.length} 個</span>
+                                                </div>
+                                                <textarea id="w_ed" defaultValue={examData.words.join(', ')} className="w-full h-64 border-2 border-[#5D4037] p-2 text-[10px] font-bold leading-relaxed resize-none" placeholder="word1, word2..." />
+                                            </div>
+                                            <div className="flex flex-col">
+                                                <div className="flex justify-between items-center mb-1">
+                                                    <h4 className="font-black text-[10px] text-[#A52A2A]">2. 句子 (每行一題)</h4>
+                                                    <span className="text-[9px] font-bold opacity-60">計：{examData.sentences.length} 行</span>
+                                                </div>
+                                                <textarea id="s_ed" defaultValue={examData.sentences.join('\n')} className="w-full h-64 border-2 border-[#5D4037] p-2 text-[10px] font-bold leading-relaxed resize-none" placeholder="Sentence 1..." />
+                                            </div>
+                                            <div className="flex flex-col">
+                                                <div className="flex justify-between items-center mb-1">
+                                                    <h4 className="font-black text-[10px] text-[#5D4037]">3. 文法 (每行一題)</h4>
+                                                    <span className="text-[9px] font-bold opacity-60">計：{examData.grammar.length} 行</span>
+                                                </div>
+                                                <textarea id="g_ed" defaultValue={examData.grammar.join('\n')} className="w-full h-64 border-2 border-[#5D4037] p-2 text-[10px] font-bold leading-relaxed resize-none" placeholder="Grammar question 1..." />
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="flex gap-2">
+                                            <button onClick={() => {
+                                                const words = document.getElementById('w_ed').value.split(',').map(s=>s.trim()).filter(s=>s);
+                                                const sentences = document.getElementById('s_ed').value.split('\n').map(s=>s.trim()).filter(s=>s);
+                                                const grammar = document.getElementById('g_ed').value.split('\n').map(s=>s.trim()).filter(s=>s);
+                                                window.fb.setDoc(window.fb.doc(window.fb.db, 'papers', currentPaperId), { words, sentences, grammar });
+                                                alert(`${currentPaperId} 內容已更新`);
+                                            }} className="flex-1 bg-[#2D5A27] text-white py-4 font-black retro-shadow btn-retro text-sm">更新 {currentPaperId.replace('Paper', '試卷 ')}</button>
+                                            
+                                            <button onClick={() => {
+                                                if(confirm("確定要將此試卷內容清空？")) {
+                                                    document.getElementById('w_ed').value = "";
+                                                    document.getElementById('s_ed').value = "";
+                                                    document.getElementById('g_ed').value = "";
+                                                }
+                                            }} className="px-6 border-2 border-red-800 text-red-800 font-bold text-xs hover:bg-red-50">清空</button>
+                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -354,7 +440,7 @@
                             <div className="space-y-6">
                                 <div className="text-center mb-4">
                                     <h2 className="text-3xl font-black border-b-2 border-[#5D4037] pb-2">受驗生登錄</h2>
-                                    <p className="text-[10px] font-bold mt-2 opacity-50 uppercase tracking-tighter">Please select your identity to proceed</p>
+                                    <p className="text-[10px] font-bold mt-2 opacity-50 uppercase tracking-tighter">Current Exam Paper: {currentPaperId}</p>
                                 </div>
                                 <div className="space-y-4">
                                     <div className="space-y-2">
@@ -383,17 +469,29 @@
                                     </div>
                                 </div>
                                 
-                                <button 
-                                    disabled={!loginName || !preLoginCheck}
-                                    onClick={() => {
-                                        window.fb.setDoc(window.fb.doc(window.fb.db, 'sessions', 'current'), {
-                                            student: { name: loginName }, step: 'ready', scores: { words: 0, sentence: 0, grammar: 0 }, wordCount: 0, currentItem: '待機中'
-                                        });
-                                    }} 
-                                    className={`w-full p-5 font-black text-xl retro-shadow transition-all ${(!loginName || !preLoginCheck) ? 'bg-stone-300 text-stone-500 cursor-not-allowed shadow-none' : 'bg-[#A52A2A] text-white btn-retro'}`}
-                                >
-                                    確認登錄
-                                </button>
+                                {loginName && isAlreadyTaken(loginName, currentPaperId) ? (
+                                    <div className="bg-red-100 p-4 border-2 border-red-800 text-red-800 font-bold text-center">
+                                        <p className="text-sm">系統偵測到您已考過 {currentPaperId.replace('Paper', '試卷 ')}</p>
+                                        <p className="text-[10px] mt-1">不可重複作答，請與監考老師聯繫。</p>
+                                    </div>
+                                ) : (
+                                    <button 
+                                        disabled={!loginName || !preLoginCheck}
+                                        onClick={() => {
+                                            window.fb.setDoc(window.fb.doc(window.fb.db, 'sessions', 'current'), {
+                                                student: { name: loginName }, 
+                                                step: 'ready', 
+                                                scores: { words: 0, sentence: 0, grammar: 0 }, 
+                                                wordCount: 0, 
+                                                currentItem: '待機中',
+                                                paperId: currentPaperId
+                                            });
+                                        }} 
+                                        className={`w-full p-5 font-black text-xl retro-shadow transition-all ${(!loginName || !preLoginCheck) ? 'bg-stone-300 text-stone-500 cursor-not-allowed shadow-none' : 'bg-[#A52A2A] text-white btn-retro'}`}
+                                    >
+                                        確認登錄
+                                    </button>
+                                )}
                                 
                                 <div className="text-center">
                                     <button onClick={() => setRole(null)} className="text-[10px] font-bold underline opacity-40">返回主選單</button>
@@ -422,6 +520,7 @@
                                         <div className="bg-white p-6 retro-border text-left space-y-4 relative">
                                             <div className="absolute top-2 right-2 stamp">合格</div>
                                             <p className="font-bold border-b pb-1">受驗者：{session.student?.name}</p>
+                                            <p className="text-[10px] font-black opacity-40 -mt-2">試卷：{session.paperId?.replace('Paper', '卷 ')}</p>
                                             <div className="space-y-2 text-sm font-bold pt-2">
                                                 <div className="flex justify-between"><span>第一部 (單字)</span><span>{session.scores?.words} / 10</span></div>
                                                 <div className="flex justify-between"><span>第二部 (句子)</span><span>{session.scores?.sentence} / 5</span></div>
@@ -441,13 +540,14 @@
                                     </div>
                                 ) : (
                                     <div className="space-y-6">
-                                        <div className="bg-white p-10 retro-border shadow-inner min-h-[200px] flex items-center justify-center">
-                                            <h3 className="text-4xl font-black text-[#3E2723] leading-snug">{session.currentItem}</h3>
+                                        <div className="bg-white p-10 retro-border shadow-inner min-h-[240px] flex items-center justify-center">
+                                            <h3 className="text-4xl font-black text-[#3E2723] leading-snug break-words">{session.currentItem}</h3>
                                         </div>
                                         {((session.step === 'sentence' || session.step === 'grammar') && session.currentItem.includes('請學生點擊抽選')) && (
                                             <button onClick={() => {
                                                 const pool = session.step === 'sentence' ? examData.sentences : examData.grammar;
-                                                updateSession({ currentItem: pool[Math.floor(Math.random() * pool.length)] });
+                                                const randomItem = pool[Math.floor(Math.random() * pool.length)];
+                                                updateSession({ currentItem: randomItem || '題目池為空，請教員確認' });
                                             }} className="w-full bg-yellow-600 text-white p-6 font-black text-2xl animate-pulse retro-shadow btn-retro">抽選題目</button>
                                         )}
                                         <p className="text-[10px] italic opacity-50 font-bold tracking-widest uppercase">
