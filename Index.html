@@ -3,19 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>昭和風英文口說測驗系統 Pro</title>
+    <title>昭和風英文口說測驗系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 使用 UMD 版本的 React 以確保與 Babel 兼容 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Firebase SDK -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;900&display=swap');
+        body {
+            background-color: #F4EAD5;
+            color: #3E2723;
+            font-family: 'Noto Serif TC', serif;
+        }
+        .vintage-border {
+            border: 2px solid #5D4037;
+            box-shadow: 4px 4px 0px #3E2723;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- 1. 先載入 Firebase (使用原生 Module) 並將其掛載到 window 全域變數 -->
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, doc, setDoc, getDoc, onSnapshot, updateDoc, deleteDoc, collection, query, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
+        import { getFirestore, doc, setDoc, onSnapshot, updateDoc, deleteDoc, collection } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
 
         const firebaseConfig = {
-            apiKey: "AIzaSyDUz6P2xIAqjcZ5NNATp5tlE-qXREKfv7U",
+            // 注意：請在此填入您的 API Key，或確保部署環境已注入
+            apiKey: "", 
             authDomain: "oralexamsystem.firebaseapp.com",
             projectId: "oralexamsystem",
             storageBucket: "oralexamsystem.firebasestorage.app",
@@ -24,167 +42,132 @@
         };
 
         try {
-            const app = initializeApp(firebaseConfig);
-            const db = getFirestore(app);
-            const auth = getAuth(app);
-
-            window.fb = { 
-                db, auth, doc, setDoc, getDoc, onSnapshot, updateDoc, deleteDoc, 
-                collection, query, getDocs, signInAnonymously, onAuthStateChanged 
-            };
+            if (firebaseConfig.apiKey) {
+                const app = initializeApp(firebaseConfig);
+                window.FB = {
+                    db: getFirestore(app),
+                    auth: getAuth(app),
+                    firestore: { doc, setDoc, onSnapshot, updateDoc, deleteDoc, collection },
+                    authActions: { signInAnonymously, onAuthStateChanged }
+                };
+            } else {
+                console.warn("Firebase API Key is missing. Please provide it in the source code.");
+                window.FB = null;
+            }
         } catch (e) {
-            console.error("Firebase Init Error", e);
+            console.error("Firebase Initialization Error:", e);
+            window.FB = null;
         }
+        
+        // 發送通知事件
+        window.dispatchEvent(new Event('firebase-ready'));
     </script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;900&display=swap');
-        body { font-family: 'Noto Serif TC', serif; background-color: #F4EAD5; color: #3E2723; overflow-x: hidden; }
-        .retro-shadow { box-shadow: 4px 4px 0px #3E2723; }
-        .retro-border { border: 2px solid #5D4037; }
-        .paper-texture { background-color: #FFF9EB; background-image: url("https://www.transparenttextures.com/patterns/parchment.png"); }
-        .tab-active { background-color: #2D5A27 !important; color: white !important; }
-        .btn-retro:active { transform: translate(2px, 2px); box-shadow: none; }
-        input[type="checkbox"] { accent-color: #2D5A27; cursor: pointer; }
-        textarea:focus { border-color: #2D5A27; background-color: #f0fdf4; }
-        .disabled-btn { background-color: #d1d5db !important; color: #9ca3af !important; border-color: #9ca3af !important; cursor: not-allowed !important; box-shadow: none !important; }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
-
-        const DEFAULT_WORDS = Array.from({length: 20}, (_, i) => `Word ${i+1}`);
-        const DEFAULT_SENTENCES = Array.from({length: 10}, (_, i) => `Sample Sentence ${i+1} for oral practice.`);
-        const DEFAULT_GRAMMAR = Array.from({length: 5}, (_, i) => `Grammar Question ${i+1}: What is the past tense of...?`);
+    <!-- 2. React 邏輯 (使用 Babel) -->
+    <script type="text/babel" data-presets="react">
+        const { useState, useEffect } = React;
 
         function App() {
-            const [role, setRole] = useState(null); 
-            const [teacherTab, setTeacherTab] = useState('exam'); 
+            const [fbStatus, setFbStatus] = useState(window.FB ? 'ready' : 'checking');
             const [user, setUser] = useState(null);
+            const [role, setRole] = useState(null);
             const [session, setSession] = useState(null);
-            const [examData, setExamData] = useState({ words: DEFAULT_WORDS, sentences: DEFAULT_SENTENCES, grammar: DEFAULT_GRAMMAR });
-            const [currentPaperId, setCurrentPaperId] = useState('PaperA'); 
-            const [students, setStudents] = useState([]);
             const [history, setHistory] = useState([]);
-            const [isAuthorized, setIsAuthorized] = useState(false);
-            const [loading, setLoading] = useState(true);
-            const [confirmData, setConfirmData] = useState(false);
-            const [activeClassTab, setActiveClassTab] = useState('all');
-            const [loginName, setLoginName] = useState("");
-            const [preLoginCheck, setPreLoginCheck] = useState(false);
+
+            const appId = "showa-exam-final";
+            const studentList = ["張小明", "李大華", "王曉玲", "趙敏", "考官測試用"];
+            const EXAM_DATA = {
+                words: ["Adventure", "Beautiful", "Calendar", "Delicious", "Education"],
+                sentences: ["Practice makes perfect.", "Knowledge is power."],
+                grammar: ["If I were you, I would go."]
+            };
 
             useEffect(() => {
-                const checkFB = setInterval(() => {
-                    if (window.fb && window.fb.signInAnonymously) {
-                        clearInterval(checkFB);
-                        const { auth, signInAnonymously, onAuthStateChanged } = window.fb;
-                        signInAnonymously(auth).catch(console.error);
-                        onAuthStateChanged(auth, (u) => {
-                            setUser(u);
-                            setLoading(false);
-                        });
-                    }
-                }, 100);
-                return () => clearInterval(checkFB);
+                const handleReady = () => {
+                    setFbStatus(window.FB ? 'ready' : 'missing-key');
+                };
+                window.addEventListener('firebase-ready', handleReady);
+                // 立即檢查一次
+                if (window.FB) setFbStatus('ready');
+                return () => window.removeEventListener('firebase-ready', handleReady);
             }, []);
 
             useEffect(() => {
-                if (!user || !window.fb) return;
-                const { db, doc, onSnapshot, collection, query } = window.fb;
-                
-                const unsubSession = onSnapshot(doc(db, 'sessions', 'current'), (snap) => setSession(snap.exists() ? snap.data() : null));
-                
-                const unsubGlobalConfig = onSnapshot(doc(db, 'config', 'settings'), (snap) => {
-                    if (snap.exists()) setCurrentPaperId(snap.data().activePaper || 'PaperA');
+                if (fbStatus !== 'ready' || !window.FB) return;
+                const { auth, authActions } = window.FB;
+                authActions.signInAnonymously(auth).catch(err => {
+                    console.error("Auth Error:", err);
+                    setFbStatus('auth-error');
                 });
+                return authActions.onAuthStateChanged(auth, setUser);
+            }, [fbStatus]);
 
-                const unsubConfig = onSnapshot(doc(db, 'papers', currentPaperId), (snap) => { 
-                    if (snap.exists()) setExamData(snap.data()); 
-                    else setExamData({ words: DEFAULT_WORDS, sentences: DEFAULT_SENTENCES, grammar: DEFAULT_GRAMMAR });
-                });
-
-                const unsubStudents = onSnapshot(doc(db, 'config', 'students'), (snap) => { if (snap.exists()) setStudents(snap.data().list || []); });
+            useEffect(() => {
+                if (!user || fbStatus !== 'ready') return;
+                const { db, firestore } = window.FB;
                 
-                const unsubHistory = onSnapshot(collection(db, 'history'), (snap) => {
-                    const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-                    setHistory(data.sort((a, b) => b.timestamp - a.timestamp));
-                });
+                const sessionRef = firestore.doc(db, 'artifacts', appId, 'public', 'data', 'current_session');
+                const unsubSession = firestore.onSnapshot(sessionRef, (doc) => {
+                    setSession(doc.exists() ? doc.data() : null);
+                }, (err) => console.error("Session Sync Error:", err));
 
-                return () => { unsubSession(); unsubGlobalConfig(); unsubConfig(); unsubStudents(); unsubHistory(); };
-            }, [user, currentPaperId]);
+                const historyRef = firestore.collection(db, 'artifacts', appId, 'public', 'data', 'history');
+                const unsubHistory = firestore.onSnapshot(historyRef, (snap) => {
+                    const docs = snap.docs.map(d => d.data());
+                    setHistory(docs.sort((a, b) => b.timestamp - a.timestamp));
+                }, (err) => console.error("History Sync Error:", err));
 
-            const updateSession = (data) => window.fb && window.fb.updateDoc(window.fb.doc(window.fb.db, 'sessions', 'current'), data);
+                return () => { unsubSession(); unsubHistory(); };
+            }, [user, fbStatus]);
 
-            const resetSession = async () => {
-                const { db, doc, setDoc, deleteDoc } = window.fb;
-                if (session && session.student) {
-                    await setDoc(doc(db, 'history', `record_${Date.now()}`), { 
-                        ...session, 
-                        paperId: currentPaperId,
-                        timestamp: Date.now() 
-                    });
-                }
-                await deleteDoc(doc(db, 'sessions', 'current'));
-                setConfirmData(false);
-                setLoginName("");
-                setPreLoginCheck(false);
-            };
-
-            const forceTerminate = async () => {
-                if (!confirm("確定要強制結束目前考試嗎？本次成績將不會被儲存。")) return;
-                const { db, doc, deleteDoc } = window.fb;
-                await deleteDoc(doc(db, 'sessions', 'current'));
-                setConfirmData(false);
-            };
-
-            const generateDefaultStudents = () => {
-                const classList = [201, 202, 203, 204];
-                const newList = [];
-                classList.forEach(cls => {
-                    for (let i = 1; i <= 31; i++) {
-                        if (i >= 12 && i <= 20) continue; 
-                        const seat = i.toString().padStart(2, '0');
-                        newList.push(`${cls}-${seat}-學生姓名`);
+            const submitScore = async (type, score) => {
+                if (!window.FB) return;
+                const { db, firestore } = window.FB;
+                const sessionRef = firestore.doc(db, 'artifacts', appId, 'public', 'data', 'current_session');
+                let updates = { [`scores.${type}`]: score };
+                
+                if (type === 'word') {
+                    const nextCount = (session.wordCount || 0) + 1;
+                    updates.wordCount = nextCount;
+                    if (nextCount >= 5) {
+                        updates.step = 'sentence';
+                        updates.currentItem = "請點擊抽取短句";
+                    } else {
+                        updates.currentItem = EXAM_DATA.words[nextCount % EXAM_DATA.words.length];
                     }
-                });
-                return newList.join('\n');
+                } else if (type === 'sentence') {
+                    updates.step = 'grammar';
+                    updates.currentItem = "請點擊抽取問答";
+                } else if (type === 'grammar') {
+                    updates.step = 'result';
+                }
+                await firestore.updateDoc(sessionRef, updates);
             };
 
-            const isAlreadyTaken = (name, paperId) => {
-                return history.some(h => h.student?.name === name && h.paperId === paperId);
-            };
-
-            const availableClasses = [...new Set(students.map(s => s.split('-')[0]))].sort();
-
-            if (loading) return <div className="min-h-screen flex items-center justify-center italic">系統啟動中...</div>;
-
-            if (role === 'teacher' && !isAuthorized) {
+            // 錯誤處理介面
+            if (fbStatus === 'missing-key') {
                 return (
-                    <div className="min-h-screen flex items-center justify-center p-4">
-                        <div className="bg-white p-8 retro-border retro-shadow w-full max-w-sm text-center">
-                            <h2 className="text-xl font-black mb-6 border-b-2 border-[#5D4037] pb-2 text-[#2D5A27]">教員身份驗證</h2>
-                            <input id="pw" type="password" placeholder="預設密碼 1234" className="w-full p-3 border-2 border-[#5D4037] mb-4 text-center bg-transparent outline-none font-bold" />
-                            <div className="flex gap-2">
-                                <button onClick={() => setRole(null)} className="flex-1 py-2 border border-[#5D4037] font-bold">返回</button>
-                                <button onClick={() => { if(document.getElementById('pw').value === '1010215') setIsAuthorized(true); else alert('密碼錯誤'); }} className="flex-1 py-2 bg-[#2D5A27] text-white font-bold btn-retro">登入</button>
-                            </div>
+                    <div className="flex h-screen items-center justify-center p-6 text-center">
+                        <div className="bg-white p-8 vintage-border max-w-sm">
+                            <h2 className="text-xl font-bold text-red-800 mb-4">系統配置錯誤</h2>
+                            <p className="text-sm opacity-70 mb-4">Firebase API Key 尚未設定。請在程式碼中的 firebaseConfig 填入有效的 apiKey。</p>
+                            <button onClick={() => window.location.reload()} className="bg-[#5D4037] text-white px-4 py-2 text-xs">重試</button>
                         </div>
                     </div>
                 );
             }
 
+            if (fbStatus === 'checking' || !user) {
+                return <div className="flex h-screen items-center justify-center italic">通信中...</div>;
+            }
+
             if (!role) {
                 return (
-                    <div className="min-h-screen flex flex-col items-center justify-center p-4">
-                        <div className="text-center mb-12">
-                            <p className="text-[10px] tracking-[0.5em] font-black opacity-40 mb-2 uppercase">English Oral Proficiency</p>
-                            <h1 className="text-5xl font-black text-[#2D5A27] py-6 border-y-4 border-double border-[#5D4037] tracking-widest">昭和英語考查</h1>
-                        </div>
-                        <div className="grid gap-8 w-full max-w-xs">
-                            <button onClick={() => setRole('teacher')} className="bg-[#2D5A27] text-white p-6 retro-border retro-shadow font-bold text-xl btn-retro">教員控制端</button>
-                            <button onClick={() => setRole('student')} className="bg-[#A52A2A] text-white p-6 retro-border retro-shadow font-bold text-xl btn-retro">受驗生入口</button>
+                    <div className="flex flex-col h-screen items-center justify-center space-y-8 bg-[#F4EAD5]">
+                        <h1 className="text-5xl font-black text-[#2D5A27] border-y-4 border-double border-[#5D4037] py-4 px-8 tracking-widest">昭和英語考查</h1>
+                        <div className="flex flex-col gap-4 w-64">
+                            <button onClick={() => setRole('student')} className="bg-[#A52A2A] text-white py-4 font-bold vintage-border">受驗生入口</button>
+                            <button onClick={() => setRole('teacher')} className="bg-[#2D5A27] text-white py-4 font-bold vintage-border">教員控制端</button>
                         </div>
                     </div>
                 );
@@ -192,381 +175,110 @@
 
             if (role === 'teacher') {
                 return (
-                    <div className="min-h-screen flex flex-col max-w-5xl mx-auto">
-                        <div className="flex bg-[#E6D5B8] border-b-2 border-[#5D4037] sticky top-0 z-10 overflow-x-auto">
-                            {['exam', 'results', 'questions', 'students'].map((t) => (
-                                <button key={t} onClick={() => setTeacherTab(t)} className={`px-4 py-4 text-xs font-black flex-1 border-r border-[#5D4037] whitespace-nowrap ${teacherTab === t ? 'tab-active' : ''}`}>
-                                    {t === 'exam' ? '考查系統' : t === 'results' ? '成績紀錄' : t === 'questions' ? '題庫編輯' : '班級管理'}
-                                </button>
-                            ))}
-                            <button onClick={() => { setRole(null); setIsAuthorized(false); }} className="px-4 py-4 text-xs font-black text-red-800">退出</button>
+                    <div className="max-w-xl mx-auto p-4">
+                        <div className="flex justify-between items-center mb-6 border-b-2 border-[#5D4037]">
+                            <h2 className="text-2xl font-black">教員端</h2>
+                            <button onClick={() => setRole(null)} className="text-xs border px-2 py-1">返回</button>
                         </div>
-
-                        <div className="flex-1 paper-texture p-4">
-                            {teacherTab === 'exam' && (
-                                <div className="space-y-4">
-                                    <div className="bg-white p-4 retro-border">
-                                        <div className="flex justify-between items-center mb-4">
-                                            <h3 className="font-black text-sm">目前測驗試卷：</h3>
-                                            <select 
-                                                value={currentPaperId} 
-                                                onChange={(e) => {
-                                                    const newPaper = e.target.value;
-                                                    window.fb.setDoc(window.fb.doc(window.fb.db, 'config', 'settings'), { activePaper: newPaper });
-                                                }}
-                                                className="bg-[#2D5A27] text-white px-3 py-1 font-bold text-xs retro-border"
-                                            >
-                                                <option value="PaperA">試卷 A</option>
-                                                <option value="PaperB">試卷 B</option>
-                                                <option value="PaperC">試卷 C</option>
-                                            </select>
-                                        </div>
-                                        <div className="flex justify-between items-start border-b border-[#5D4037] mb-3 pb-1">
-                                            <h3 className="font-black text-xs uppercase opacity-60">Status / 受驗生狀態</h3>
-                                            {session && (
-                                                <button onClick={forceTerminate} className="text-[10px] bg-red-800 text-white px-2 py-0.5 font-bold hover:bg-red-600">強制結束考試</button>
-                                            )}
-                                        </div>
-                                        {session ? (
-                                            <div className="space-y-2 animate-in fade-in">
-                                                <div className="flex justify-between items-center">
-                                                    <div>
-                                                        <p className="font-black text-xl">{session.student?.name}</p>
-                                                        <p className="text-[10px] font-bold opacity-50">正在考查：{currentPaperId}</p>
-                                                    </div>
-                                                    <span className="text-xs font-bold bg-[#A52A2A] text-white px-2 py-1">
-                                                        {session.step === 'ready' ? '準備中' : session.step === 'words' ? '單字測驗' : session.step === 'sentence' ? '句子測驗' : session.step === 'grammar' ? '文法測驗' : '結算中'}
-                                                    </span>
-                                                </div>
-                                                <div className="grid grid-cols-3 gap-2 text-[10px] font-bold border-t pt-2">
-                                                    <p>單字：{session.scores?.words}/10</p>
-                                                    <p>句子：{session.scores?.sentence}/5</p>
-                                                    <p>文法：{session.scores?.grammar}/5</p>
-                                                </div>
-                                            </div>
-                                        ) : <p className="text-center py-6 italic opacity-50">等待學生連線...</p>}
-                                    </div>
-
-                                    {session && session.step !== 'ready' && (
-                                        <div className="bg-white p-4 retro-border space-y-4 animate-in fade-in">
-                                            {session.step === 'words' && (
-                                                <div>
-                                                    <div className="flex justify-between items-end mb-2">
-                                                        <h4 className="font-black text-sm text-[#2D5A27]">單字階段 ({session.wordCount || 0}/10)</h4>
-                                                        <span className="text-[10px] font-bold bg-stone-100 px-2 py-0.5 retro-border">已點選過的單字會變灰</span>
-                                                    </div>
-                                                    <div className="grid grid-cols-4 md:grid-cols-5 gap-2 mb-4">
-                                                        {examData.words?.map((w, i) => {
-                                                            const isUsed = session.usedWordIndices?.includes(i);
-                                                            return (
-                                                                <button 
-                                                                    key={i} 
-                                                                    disabled={isUsed}
-                                                                    onClick={() => {
-                                                                        const currentUsed = session.usedWordIndices || [];
-                                                                        updateSession({ 
-                                                                            currentItem: w, 
-                                                                            currentItemIndex: i,
-                                                                            usedWordIndices: [...currentUsed, i]
-                                                                        });
-                                                                    }}
-                                                                    className={`p-2 text-[10px] retro-border font-bold truncate transition-colors ${isUsed ? 'disabled-btn' : (session.currentItem === w ? 'bg-[#2D5A27] text-white shadow-inner' : 'bg-white hover:bg-stone-100')}`}
-                                                                >
-                                                                    {w}
-                                                                </button>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                    <div className="flex gap-2">
-                                                        <button onClick={() => updateSession({ 'scores.words': (session.scores?.words || 0) + 1, wordCount: (session.wordCount || 0) + 1, currentItem: '✓ 正確' })} className="flex-1 py-4 bg-green-700 text-white font-bold retro-border">+1 正確</button>
-                                                        <button onClick={() => updateSession({ wordCount: (session.wordCount || 0) + 1, currentItem: '✗ 錯誤' })} className="flex-1 py-4 bg-red-800 text-white font-bold retro-border">錯誤</button>
-                                                    </div>
-                                                    {session.wordCount >= 10 && <button onClick={() => updateSession({ step: 'sentence', currentItem: '請學生點擊抽選', currentItemIndex: null })} className="w-full mt-4 py-3 bg-black text-white font-bold">下一步：句子</button>}
-                                                </div>
-                                            )}
-
-                                            {(session.step === 'sentence' || session.step === 'grammar') && (
-                                                <div className="space-y-4">
-                                                    <h4 className="font-black text-sm text-[#A52A2A]">{session.step === 'sentence' ? '句子評分 (0~5)' : '文法評分 (0~5)'}</h4>
-                                                    <div className="p-6 bg-stone-100 retro-border text-center font-black italic text-xl min-h-[100px] flex items-center justify-center">{session.currentItem}</div>
-                                                    <div className="flex gap-1">
-                                                        {[0,1,2,3,4,5].map(s => (
-                                                            <button key={s} onClick={() => {
-                                                                const isSent = session.step === 'sentence';
-                                                                updateSession({ 
-                                                                    [`scores.${session.step}`]: s,
-                                                                    step: isSent ? 'grammar' : 'result',
-                                                                    currentItem: isSent ? '請學生點擊抽選' : '考查終了'
-                                                                });
-                                                            }} className="flex-1 py-5 bg-[#2D5A27] text-white font-black retro-border text-xl">{s}</button>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
+                        {!session ? (
+                            <div className="bg-white p-10 text-center vintage-border italic opacity-50 text-stone-500">等待學生登錄中...</div>
+                        ) : (
+                            <div className="space-y-4">
+                                <div className="bg-[#FFF9EB] p-4 vintage-border flex justify-between font-bold">
+                                    <span>受驗生：{session.studentName}</span>
+                                    <span className="text-[#A52A2A] uppercase">{session.step}</span>
                                 </div>
-                            )}
-
-                            {teacherTab === 'results' && (
-                                <div className="space-y-4">
-                                    <div className="flex bg-white/50 retro-border p-1 gap-1 overflow-x-auto no-scrollbar">
-                                        <button onClick={() => setActiveClassTab('all')} 
-                                            className={`px-3 py-1 text-[10px] font-bold ${activeClassTab === 'all' ? 'bg-[#2D5A27] text-white' : 'hover:bg-stone-200'}`}>
-                                            全部紀錄
-                                        </button>
-                                        {availableClasses.map(cls => (
-                                            <button key={cls} onClick={() => setActiveClassTab(cls)} 
-                                                className={`px-3 py-1 text-[10px] font-bold whitespace-nowrap ${activeClassTab === cls ? 'bg-[#A52A2A] text-white' : 'hover:bg-stone-200'}`}>
-                                                {cls} 班
-                                            </button>
-                                        ))}
+                                {session.step === 'words' && (
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <button onClick={() => submitScore('word', (session.scores.word || 0) + 1)} className="bg-green-700 text-white py-8 text-2xl font-black vintage-border">✓ 正確</button>
+                                        <button onClick={() => submitScore('word', session.scores.word || 0)} className="bg-red-900 text-white py-8 text-2xl font-black vintage-border">✗ 錯誤</button>
                                     </div>
-
-                                    <div className="bg-white retro-border overflow-hidden">
-                                        <table className="w-full text-left text-xs">
-                                            <thead className="bg-[#5D4037] text-white font-black">
-                                                <tr>
-                                                    <th className="p-2">時間</th>
-                                                    <th className="p-2">學號姓名</th>
-                                                    <th className="p-2">試卷</th>
-                                                    <th className="p-2 text-center">單字</th>
-                                                    <th className="p-2 text-center">句子</th>
-                                                    <th className="p-2 text-center">文法</th>
-                                                    <th className="p-2 text-center">總分</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="font-bold">
-                                                {history
-                                                    .filter(h => activeClassTab === 'all' || h.student?.name?.startsWith(activeClassTab))
-                                                    .map((h, i) => (
-                                                    <tr key={i} className="border-b border-stone-200 hover:bg-stone-50">
-                                                        <td className="p-2 text-[10px] opacity-60">{new Date(h.timestamp).toLocaleString([], {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'})}</td>
-                                                        <td className="p-2">{h.student?.name}</td>
-                                                        <td className="p-2 text-[10px] font-black">{h.paperId?.replace('Paper', '卷 ')}</td>
-                                                        <td className="p-2 text-center">{h.scores?.words}</td>
-                                                        <td className="p-2 text-center">{h.scores?.sentence}</td>
-                                                        <td className="p-2 text-center">{h.scores?.grammar}</td>
-                                                        <td className="p-2 text-center text-[#A52A2A]">{(h.scores?.words||0)+(h.scores?.sentence||0)+(h.scores?.grammar||0)}</td>
-                                                    </tr>
-                                                ))}
-                                                {history.length === 0 && <tr><td colSpan="7" className="p-8 text-center italic opacity-40">尚無歷史紀錄</td></tr>}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                    <button onClick={() => {
-                                        if(!confirm("確定要清空所有成績紀錄嗎？此動作無法復原。")) return;
-                                        history.forEach(h => window.fb.deleteDoc(window.fb.doc(window.fb.db, 'history', h.id)));
-                                    }} className="text-[10px] text-red-800 font-bold underline">清空所有紀錄</button>
-                                </div>
-                            )}
-
-                            {teacherTab === 'students' && (
-                                <div className="bg-white p-4 retro-border space-y-4">
-                                    <div className="flex justify-between items-end">
-                                        <h4 className="font-black text-xs text-[#2D5A27] uppercase tracking-widest">Student Roster / 名冊管理</h4>
-                                        <button onClick={() => { if(confirm("確定要重設名單嗎？")) document.getElementById('stu_area').value = generateDefaultStudents(); }} 
-                                            className="text-[10px] bg-[#5D4037] text-white px-2 py-1 font-bold">自動生成 201-204 名單</button>
-                                    </div>
-                                    <p className="text-[10px] opacity-60 italic">格式：班級-座號-姓名 (每行一位)。空號 12-20 已自動排除。</p>
-                                    <textarea id="stu_area" defaultValue={students.join('\n')} className="w-full h-80 border-2 border-[#5D4037] p-2 text-sm font-bold outline-none shadow-inner" />
-                                    <button onClick={() => {
-                                        const list = document.getElementById('stu_area').value.split('\n').map(s=>s.trim()).filter(s=>s);
-                                        window.fb.setDoc(window.fb.doc(window.fb.db, 'config', 'students'), { list });
-                                        alert('名冊已更新到雲端');
-                                    }} className="w-full bg-[#2D5A27] text-white py-4 font-black retro-shadow btn-retro">儲存名冊</button>
-                                </div>
-                            )}
-
-                            {teacherTab === 'questions' && (
-                                <div className="space-y-4">
-                                    <div className="bg-[#E6D5B8] p-3 retro-border flex items-center justify-between">
-                                        <h4 className="font-black text-xs text-[#5D4037]">編輯中試卷：</h4>
-                                        <div className="flex gap-2">
-                                            {['PaperA', 'PaperB', 'PaperC'].map(id => (
-                                                <button key={id} onClick={() => setCurrentPaperId(id)} 
-                                                    className={`px-3 py-1 text-[10px] font-bold retro-border ${currentPaperId === id ? 'bg-[#2D5A27] text-white shadow-inner' : 'bg-white text-[#5D4037]'}`}>
-                                                    {id.replace('Paper', '試卷 ')}
-                                                </button>
+                                )}
+                                {(session.step === 'sentence' || session.step === 'grammar') && (
+                                    <div className="bg-white p-6 vintage-border text-center">
+                                        <p className="mb-4 font-bold">評分 (0-5 分)</p>
+                                        <div className="flex justify-center gap-2">
+                                            {[0, 1, 2, 3, 4, 5].map(s => (
+                                                <button key={s} onClick={() => submitScore(session.step, s)} className="w-12 h-12 bg-[#2D5A27] text-white font-black vintage-border text-xl">{s}</button>
                                             ))}
                                         </div>
                                     </div>
-
-                                    <div className="bg-white p-4 retro-border space-y-6 shadow-md">
-                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                            <div className="flex flex-col">
-                                                <div className="flex justify-between items-center mb-1">
-                                                    <h4 className="font-black text-[10px] text-[#2D5A27]">1. 單字 (用逗號隔開)</h4>
-                                                    <span className="text-[9px] font-bold opacity-60">計：{examData.words.length} 個</span>
-                                                </div>
-                                                <textarea id="w_ed" defaultValue={examData.words.join(', ')} className="w-full h-64 border-2 border-[#5D4037] p-2 text-[10px] font-bold leading-relaxed resize-none" placeholder="word1, word2..." />
-                                            </div>
-                                            <div className="flex flex-col">
-                                                <div className="flex justify-between items-center mb-1">
-                                                    <h4 className="font-black text-[10px] text-[#A52A2A]">2. 句子 (每行一題)</h4>
-                                                    <span className="text-[9px] font-bold opacity-60">計：{examData.sentences.length} 行</span>
-                                                </div>
-                                                <textarea id="s_ed" defaultValue={examData.sentences.join('\n')} className="w-full h-64 border-2 border-[#5D4037] p-2 text-[10px] font-bold leading-relaxed resize-none" placeholder="Sentence 1..." />
-                                            </div>
-                                            <div className="flex flex-col">
-                                                <div className="flex justify-between items-center mb-1">
-                                                    <h4 className="font-black text-[10px] text-[#5D4037]">3. 文法 (每行一題)</h4>
-                                                    <span className="text-[9px] font-bold opacity-60">計：{examData.grammar.length} 行</span>
-                                                </div>
-                                                <textarea id="g_ed" defaultValue={examData.grammar.join('\n')} className="w-full h-64 border-2 border-[#5D4037] p-2 text-[10px] font-bold leading-relaxed resize-none" placeholder="Grammar question 1..." />
-                                            </div>
-                                        </div>
-                                        
-                                        <div className="flex gap-2">
-                                            <button onClick={() => {
-                                                const words = document.getElementById('w_ed').value.split(',').map(s=>s.trim()).filter(s=>s);
-                                                const sentences = document.getElementById('s_ed').value.split('\n').map(s=>s.trim()).filter(s=>s);
-                                                const grammar = document.getElementById('g_ed').value.split('\n').map(s=>s.trim()).filter(s=>s);
-                                                window.fb.setDoc(window.fb.doc(window.fb.db, 'papers', currentPaperId), { words, sentences, grammar });
-                                                alert(`${currentPaperId} 內容已更新`);
-                                            }} className="flex-1 bg-[#2D5A27] text-white py-4 font-black retro-shadow btn-retro text-sm">更新 {currentPaperId.replace('Paper', '試卷 ')}</button>
-                                            
-                                            <button onClick={() => {
-                                                if(confirm("確定要將此試卷內容清空？")) {
-                                                    document.getElementById('w_ed').value = "";
-                                                    document.getElementById('s_ed').value = "";
-                                                    document.getElementById('g_ed').value = "";
-                                                }
-                                            }} className="px-6 border-2 border-red-800 text-red-800 font-bold text-xs hover:bg-red-50">清空</button>
-                                        </div>
+                                )}
+                                {session.step === 'result' && (
+                                    <button onClick={async () => {
+                                        const { db, firestore } = window.FB;
+                                        const historyRef = firestore.doc(firestore.collection(db, 'artifacts', appId, 'public', 'data', 'history'));
+                                        await firestore.setDoc(historyRef, { ...session, timestamp: Date.now() });
+                                        await firestore.deleteDoc(firestore.doc(db, 'artifacts', appId, 'public', 'data', 'current_session'));
+                                    }} className="w-full bg-black text-white py-4 font-bold vintage-border">存檔並結束考查</button>
+                                )}
+                            </div>
+                        )}
+                        <div className="mt-8">
+                            <p className="font-bold border-l-4 border-green-800 pl-2 mb-2">歷史成績單</p>
+                            <div className="bg-white vintage-border text-xs divide-y">
+                                {history.map((h, i) => (
+                                    <div key={i} className="p-2 flex justify-between">
+                                        <span>{h.studentName}</span>
+                                        <span className="font-bold text-red-800">總分：{(h.scores.word||0)+(h.scores.sentence||0)+(h.scores.grammar||0)}</span>
                                     </div>
-                                </div>
-                            )}
+                                ))}
+                            </div>
                         </div>
                     </div>
                 );
             }
 
             return (
-                <div className="p-4 max-w-md mx-auto min-h-screen flex flex-col">
-                    <div className="paper-texture p-6 retro-border shadow-xl flex-1 flex flex-col justify-center">
-                        {!session ? (
-                            <div className="space-y-6">
-                                <div className="text-center mb-4">
-                                    <h2 className="text-3xl font-black border-b-2 border-[#5D4037] pb-2">受驗生登錄</h2>
-                                    <p className="text-[10px] font-bold mt-2 opacity-50 uppercase tracking-tighter">Current Exam Paper: {currentPaperId}</p>
+                <div className="max-w-md mx-auto p-4 h-screen flex flex-col justify-center">
+                    {!session ? (
+                        <div className="bg-[#FFF9EB] p-8 vintage-border space-y-6">
+                            <h2 className="text-2xl font-black text-center">受驗生登錄</h2>
+                            <select id="sName" className="w-full p-3 bg-white border-2 border-[#5D4037] font-bold">
+                                <option value="">請選取您的姓名</option>
+                                {studentList.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                            <button onClick={async () => {
+                                const { db, firestore } = window.FB;
+                                const name = document.getElementById('sName').value;
+                                if (!name) return;
+                                await firestore.setDoc(firestore.doc(db, 'artifacts', appId, 'public', 'data', 'current_session'), {
+                                    studentName: name,
+                                    step: 'words',
+                                    scores: { word: 0, sentence: 0, grammar: 0 },
+                                    wordCount: 0,
+                                    currentItem: EXAM_DATA.words[0],
+                                    timestamp: Date.now()
+                                });
+                            }} className="w-full bg-[#A52A2A] text-white py-4 font-black vintage-border">開始考查</button>
+                        </div>
+                    ) : (
+                        <div className="bg-white p-8 vintage-border text-center space-y-8 relative min-h-[300px] flex flex-col justify-center">
+                            {session.step === 'result' ? (
+                                <div className="space-y-6">
+                                    <h3 className="text-3xl font-black text-[#A52A2A]">考查終了</h3>
+                                    <div className="text-5xl font-black border-4 border-double border-[#5D4037] py-6 mx-4 bg-stone-50">
+                                        {(session.scores.word||0) + (session.scores.sentence||0) + (session.scores.grammar||0)}
+                                        <span className="text-sm ml-2">點</span>
+                                    </div>
+                                    <p className="text-xs italic opacity-60">請靜候教員指示離場</p>
                                 </div>
-                                <div className="space-y-4">
-                                    <div className="space-y-2">
-                                        <label className="text-[10px] font-bold opacity-70">1. 選取班級座號姓名</label>
-                                        <select 
-                                            value={loginName}
-                                            onChange={(e) => setLoginName(e.target.value)}
-                                            className="w-full p-4 border-2 border-[#5D4037] bg-white font-black outline-none focus:ring-2 ring-[#2D5A27]"
-                                        >
-                                            <option value="">-- 請點擊選擇 --</option>
-                                            {students.map((s,i) => <option key={i} value={s}>{s}</option>)}
-                                        </select>
-                                    </div>
-                                    
-                                    <div className="bg-white p-4 retro-border flex items-center gap-3">
-                                        <input 
-                                            type="checkbox" 
-                                            id="pre_check" 
-                                            checked={preLoginCheck}
-                                            onChange={(e) => setPreLoginCheck(e.target.checked)}
-                                            className="w-6 h-6 border-2 border-[#5D4037]"
-                                        />
-                                        <label htmlFor="pre_check" className="font-black text-sm cursor-pointer select-none">
-                                            2. 我已確認個人資料正確
-                                        </label>
-                                    </div>
+                            ) : (
+                                <div>
+                                    <div className="text-xs font-bold opacity-30 absolute top-4 left-4">EXAM IN PROGRESS</div>
+                                    <h2 className="text-4xl font-black leading-tight">{session.currentItem}</h2>
+                                    {session.currentItem.includes("請點擊抽取") && (
+                                        <button onClick={() => {
+                                            const { db, firestore } = window.FB;
+                                            const pool = session.step === 'sentence' ? EXAM_DATA.sentences : EXAM_DATA.grammar;
+                                            const random = pool[Math.floor(Math.random() * pool.length)];
+                                            firestore.updateDoc(firestore.doc(db, 'artifacts', appId, 'public', 'data', 'current_session'), { currentItem: random });
+                                        }} className="mt-8 bg-yellow-600 text-white px-6 py-2 font-bold vintage-border animate-bounce">抽取題目</button>
+                                    )}
                                 </div>
-                                
-                                {loginName && isAlreadyTaken(loginName, currentPaperId) ? (
-                                    <div className="bg-red-100 p-4 border-2 border-red-800 text-red-800 font-bold text-center">
-                                        <p className="text-sm">系統偵測到您已考過 {currentPaperId.replace('Paper', '試卷 ')}</p>
-                                        <p className="text-[10px] mt-1">不可重複作答，請與監考老師聯繫。</p>
-                                    </div>
-                                ) : (
-                                    <button 
-                                        disabled={!loginName || !preLoginCheck}
-                                        onClick={() => {
-                                            window.fb.setDoc(window.fb.doc(window.fb.db, 'sessions', 'current'), {
-                                                student: { name: loginName }, 
-                                                step: 'ready', 
-                                                scores: { words: 0, sentence: 0, grammar: 0 }, 
-                                                wordCount: 0, 
-                                                currentItem: '待機中',
-                                                paperId: currentPaperId,
-                                                usedWordIndices: []
-                                            });
-                                        }} 
-                                        className={`w-full p-5 font-black text-xl retro-shadow transition-all ${(!loginName || !preLoginCheck) ? 'bg-stone-300 text-stone-500 cursor-not-allowed shadow-none' : 'bg-[#A52A2A] text-white btn-retro'}`}
-                                    >
-                                        確認登錄
-                                    </button>
-                                )}
-                                
-                                <div className="text-center">
-                                    <button onClick={() => setRole(null)} className="text-[10px] font-bold underline opacity-40">返回主選單</button>
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="text-center space-y-6">
-                                {session.step === 'ready' ? (
-                                    <div className="space-y-10">
-                                        <div className="bg-white p-6 retro-border shadow-inner">
-                                            <p className="text-[10px] font-black opacity-40 mb-2 uppercase tracking-widest">Login Successful</p>
-                                            <h3 className="text-2xl font-black mb-6">{session.student?.name}</h3>
-                                            <div className="flex items-center justify-center gap-3 font-bold text-lg">
-                                                <input type="checkbox" id="c_box" checked={confirmData} onChange={(e)=>setConfirmData(e.target.checked)} className="w-6 h-6 border-2 border-[#5D4037]" />
-                                                <label htmlFor="c_box" className="cursor-pointer">再次確認身份正確</label>
-                                            </div>
-                                        </div>
-                                        <button disabled={!confirmData} onClick={() => updateSession({ step: 'words', currentItem: '準備開始' })}
-                                            className={`w-full p-6 font-black text-xl retro-shadow transition-all ${confirmData ? 'bg-[#2D5A27] text-white btn-retro' : 'bg-stone-300 text-stone-500 shadow-none cursor-not-allowed'}`}>進入考場</button>
-                                        
-                                        <button onClick={resetSession} className="text-xs font-bold opacity-40 hover:opacity-100 underline">資料錯誤？返回重選</button>
-                                    </div>
-                                ) : session.step === 'result' ? (
-                                    <div className="space-y-6 animate-in zoom-in">
-                                        <h2 className="text-2xl font-black border-b-2 border-[#5D4037] pb-2">考查成績結算</h2>
-                                        <div className="bg-white p-6 retro-border text-left space-y-4">
-                                            <p className="font-bold border-b pb-1">受驗者：{session.student?.name}</p>
-                                            <p className="text-[10px] font-black opacity-40 -mt-2">試卷：{session.paperId?.replace('Paper', '卷 ')}</p>
-                                            <div className="space-y-2 text-sm font-bold pt-2">
-                                                <div className="flex justify-between"><span>第一部 (單字)</span><span>{session.scores?.words} / 10</span></div>
-                                                <div className="flex justify-between"><span>第二部 (句子)</span><span>{session.scores?.sentence} / 5</span></div>
-                                                <div className="flex justify-between"><span>第三部 (文法)</span><span>{session.scores?.grammar} / 5</span></div>
-                                            </div>
-                                            <div className="pt-4 border-t-2 border-double border-[#5D4037] text-2xl font-black text-red-800 flex justify-between">
-                                                <span>總得分</span>
-                                                <span>{(session.scores?.words || 0) + (session.scores?.sentence || 0) + (session.scores?.grammar || 0)}</span>
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center justify-center gap-2 font-bold py-4">
-                                            <input type="checkbox" id="k_box" className="w-5 h-5" />
-                                            <label htmlFor="k_box" className="cursor-pointer">我已確認並知曉成績</label>
-                                        </div>
-                                        <button onClick={() => { if(document.getElementById('k_box').checked) resetSession(); else alert('請勾選確認'); }} 
-                                            className="w-full bg-[#5D4037] text-white p-4 font-black text-lg btn-retro">完成並重置系統</button>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-6">
-                                        <div className="bg-white p-10 retro-border shadow-inner min-h-[240px] flex items-center justify-center">
-                                            <h3 className="text-4xl font-black text-[#3E2723] leading-snug break-words">{session.currentItem}</h3>
-                                        </div>
-                                        {((session.step === 'sentence' || session.step === 'grammar') && session.currentItem.includes('請學生點擊抽選')) && (
-                                            <button onClick={() => {
-                                                const pool = session.step === 'sentence' ? examData.sentences : examData.grammar;
-                                                const randomItem = pool[Math.floor(Math.random() * pool.length)];
-                                                updateSession({ currentItem: randomItem || '題目池為空，請教員確認' });
-                                            }} className="w-full bg-yellow-600 text-white p-6 font-black text-2xl animate-pulse retro-shadow btn-retro">抽選題目</button>
-                                        )}
-                                        <p className="text-[10px] italic opacity-50 font-bold tracking-widest uppercase">
-                                            {session.step === 'words' ? `Stage: Vocabulary (${session.wordCount}/10)` : `Stage: ${session.step}`}
-                                        </p>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             );
         }
