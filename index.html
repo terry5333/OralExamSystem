@@ -15,14 +15,14 @@
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
         const firebaseConfig = {
-            apiKey: "AIzaSyDUz6P2xIAqjcZ5NNATp5tlE-qXREKfv7U",
-            authDomain: "oralexamsystem.firebaseapp.com",
-            projectId: "oralexamsystem",
-            storageBucket: "oralexamsystem.firebasestorage.app",
-            messagingSenderId: "86477996314",
-            appId: "1:86477996314:web:b8d7772853805d6d6feca3"
-        };
-
+           const firebaseConfig = {
+  apiKey: "AIzaSyDUz6P2xIAqjcZ5NNATp5tlE-qXREKfv7U",
+  authDomain: "oralexamsystem.firebaseapp.com",
+  projectId: "oralexamsystem",
+  storageBucket: "oralexamsystem.firebasestorage.app",
+  messagingSenderId: "86477996314",
+  appId: "1:86477996314:web:b8d7772853805d6d6feca3"
+};
         try {
             const app = initializeApp(firebaseConfig);
             const db = getFirestore(app);
